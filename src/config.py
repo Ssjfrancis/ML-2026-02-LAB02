@@ -26,9 +26,10 @@ DIR_CACHE = Path(_cache) if Path(_cache).is_absolute() else RAIZ / _cache
 RANDOM_STATE = int(os.getenv("RANDOM_STATE", "42"))
 TEST_SIZE = float(os.getenv("TEST_SIZE", "0.25"))
 
-# Dimensiones que se informan en la tabla. LDA queda acotada a C - 1.
+# Dimensiones fijadas antes del experimento.
 DIMENSIONES = (10, 20, 30)
 DIMENSION_MAPAS = 20
+DIMENSIONES_RECONSTRUCCION = (2, 10, 30, 100)
 
 TSNE_PERPLEXITY = 30
 UMAP_N_NEIGHBORS = 15
@@ -37,10 +38,16 @@ UMAP_MIN_DIST = 0.1
 CLASIFICADORES = ("svm", "knn", "arbol")
 EMBEDDINGS = ("pca", "lda", "fisherfaces")
 
+NOMBRES_DATASETS = {"olivetti": "Olivetti", "lfw": "LFW"}
+NOMBRES_EMBEDDINGS = {"pca": "PCA", "lda": "LDA", "fisherfaces": "Fisherfaces"}
+NOMBRES_CLASIFICADORES = {"svm": "SVM", "knn": "k-NN", "arbol": "Árbol"}
 
-def ruta_modelo(dataset: str, embedding: str, modelo: str, d: int) -> Path:
+
+def ruta_modelo(
+    dataset: str, embedding: str, modelo: str, d: int, directorio: Path = DIR_MODELOS,
+) -> Path:
     """Artefacto joblib de una combinación ya ajustada en TRAIN."""
-    return DIR_MODELOS / f"{dataset}_{embedding}_{modelo}_d{d}.joblib"
+    return directorio / f"{dataset}_{embedding}_{modelo}_d{d}.joblib"
 
 
 def asegurar_directorios() -> None:

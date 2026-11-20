@@ -1,126 +1,91 @@
-# Laboratorio: embeddings faciales lineales
+# Laboratorio 02 · Embeddings faciales lineales
 
-Pipeline académico para comparar **PCA** y **LDA** en el reconocimiento de rostros, y dejar listo el lugar donde el alumno completa **Fisherfaces** y el experimento con **LFW**.
+Machine Learning · Universidad Católica del Norte · Segundo semestre de 2026
+Docente Dr. Juan Bekios Calfa
 
-La pregunta de trabajo es si una fotografía nueva corresponde a una identidad ya conocida. El píxel no se compara directo: primero se obtiene un embedding lineal y después un clasificador elige la identidad.
+Compara PCA, LDA y Fisherfaces con SVM lineal, k-NN y árbol de decisión. La grilla fija de dimensiones 10, 20 y 30 se evaluó en Olivetti y LFW. El código deriva de la revisión docente `4a25df2`. [Repositorio base del docente](https://github.com/jbekios/ML-2026-02-LAB02)
 
-## Requisitos
+## Instalar y ejecutar
 
-- [Conda](https://docs.conda.io/) (Miniconda o Anaconda)
-- Uso académico de Olivetti y LFW, con atribución a scikit-learn y a las fuentes originales de las fotografías
-
-## Entorno conda
-
-No use `pip install` ni `requirements.txt`. El entorno oficial es `environment.yml`.
+Desde la carpeta que contiene `environment.yml`, en una terminal con Conda disponible. En Windows se pueden ejecutar los mismos comandos desde Miniforge Prompt o Anaconda Prompt.
 
 ```bash
 conda env create -f environment.yml
 conda activate lab-embeddings-faciales
+python main.py experimentos
+streamlit run app.py
 ```
 
-Para recrearlo:
+La primera carga requiere conexión para descargar las bases mediante scikit-learn. Olivetti y LFW pueden ejecutarse por separado. El CSV consolidado conserva las filas del otro conjunto cuando se vuelve a ejecutar uno.
 
 ```bash
-conda env update -f environment.yml --prune
+python main.py olivetti
+python main.py lfw
+python -m unittest discover -s tests -v
+jupyter lab Analisis_Laboratorio_02.ipynb
 ```
 
-Los valores por defecto (semilla 42, 25 % de prueba, caché en `data/cache`) alcanzan para ejecutar el laboratorio. Si quiere cambiarlos:
+La aplicación muestra la dirección local en la terminal. Elige una base, un embedding, un clasificador, una dimensión y una foto de TEST. La identidad mostrada coincide con `predict()`. La probabilidad corresponde a esa identidad. Si el modelo falta o su huella difiere, se ajusta con TRAIN y se vuelve a guardar. Usa cachés `.joblib` generadas localmente por el proyecto.
 
-```bash
-cp .env.example .env
-```
+El notebook se ejecuta de principio a fin desde la raíz. Lee la evidencia compatible que trae el ZIP y ejecuta el pipeline cuando falta. Para regenerar los experimentos, cambia `REGENERAR` a `True` en la primera celda de código. Las dos pruebas de evidencia esperan el CSV de ambos conjuntos. La prueba de interfaz usa también las bases descargadas.
 
-## Cómo ejecutar
+## Protocolo experimental
 
-Desde la raíz del repositorio, con el entorno activado:
+- Split estratificado por identidad, semilla 42 y 25 % de TEST. Los índices de cada base se comparten entre las 27 combinaciones.
+- LFW usa `min_faces_per_person=20`, `resize=0.5` y hasta 50 identidades. Los empates de frecuencia se resuelven por el ID de origen del cargador.
+- PCA usa SVD completa. LDA usa `solver="svd"`. Fisherfaces ajusta PCA y luego LDA en TRAIN. Se conserva la configuración de la base docente con `d_pca=d_lda=d` en la grilla.
+- SVM lineal usa `C=1` y `probability=True`. k-NN usa tres vecinos y voto uniforme. El árbol usa impureza Gini y profundidad máxima ocho.
+- Se mide una corrida de ajuste y predicción por clasificador sobre sus embeddings. `tiempo_s` es la suma de `ajuste_s` y `prediccion_s`. El costo de obtener el embedding queda fuera de esta medida.
+- t-SNE y UMAP se ajustan con las coordenadas de TRAIN a `d=20`. t-SNE usa perplejidad 30, inicio PCA y 1.000 iteraciones. UMAP usa 15 vecinos, distancia mínima 0,1 e inicio espectral. Ambos usan distancia euclidiana y semilla 42.
 
-```bash
-python main.py olivetti       # PCA y LDA; guarda tabla, figuras y modelos
-python main.py lfw            # TODO(alumno): mismo protocolo cuando complete el cargador
-python main.py experimentos   # Olivetti e intento de LFW
-streamlit run app.py          # rostros de prueba con PCA o LDA
-```
+La configuración por defecto reproduce el experimento. `.env.example` documenta las variables para una ejecución distinta. Conserva los valores por defecto si quieres replicar las cifras del informe.
 
-La primera ejecución descarga Olivetti en `data/cache/`. TRAIN aprende la media, las direcciones y el clasificador. TEST solo pasa por `transform` y `predict`.
+## Evidencia incluida
 
-Salida esperada al cargar Olivetti: `X (400, 4096)`, train `(300, 4096)`, test `(100, 4096)`.
+| Ruta | Contenido |
+| --- | --- |
+| `data/resultados/resultados_modelos.csv` | 54 combinaciones con configuración, accuracy, precisión macro, recall macro, macro-F1 y tiempos en segundos |
+| `data/resultados/resultados_olivetti.csv` y `resultados_lfw.csv` | Tablas de 27 filas por conjunto |
+| `data/resultados/predicciones_*.csv` | Foto de TEST, identidad real y predicción por combinación |
+| `data/resultados/identidades_*.csv` y `particion_*.csv` | Equivalencia de IDs y nombres, conteos e índices TRAIN/TEST. `fila` identifica la posición tras la carga y el filtrado |
+| `data/resultados/varianza_pca_*.csv` y `reconstruccion_pca_*.csv` | Varianza acumulada, ECM de la foto ilustrada y ECM medio en TEST |
+| `data/resultados/protocolo_*.json` | Formas reales, huella de TRAIN, semilla y versiones |
+| `figuras/` | Curvas PCA, eigenfaces, reconstrucciones, mapas, 54 confusiones, 18 paneles de ejemplos y comparaciones |
+| `docs/` | Informe IEEE editable y compilado, auditoría y copia portable del historial Git |
 
-## Qué está implementado y qué debe completar
+El CSV usa coma como separador de campos y punto decimal. Los archivos por identidad permiten leer los códigos de las matrices de confusión. Las carpetas de datos, resultados, figuras y documentos se gestionan según el `.gitignore` docente. El ZIP entrega la evidencia regenerable junto al código.
 
-| Módulo | Estado | Qué hace |
-| --- | --- | --- |
-| `src/datos/olivetti.py` | Listo | 400 fotos, 40 identidades, 64×64 |
-| `src/datos/division.py` | Listo | Split estratificado, índices disjuntos |
-| `src/embeddings/pca.py` | Listo | PCA ajustado solo con TRAIN; eigenfaces y varianza |
-| `src/embeddings/lda.py` | Listo | LDA con `solver="svd"`; `d ≤ C−1` |
-| `src/clasificadores/` | Listo | SVM lineal, k-NN (k=3) y árbol (`max_depth=8`) |
-| `src/evaluacion/` | Listo | Accuracy, macro-F1, confusión, curva PCA, t-SNE y UMAP |
-| `src/interfaz/` y `app.py` | Listo | Foto de prueba, acierto y probabilidad |
-| `src/embeddings/fisherfaces.py` | `TODO(alumno)` | PCA y después LDA, ambos ajustados en TRAIN |
-| `src/datos/lfw.py` | `TODO(alumno)` | Hasta 50 identidades con al menos 20 fotos |
+## Compilar el informe
 
-Si ejecuta una etapa pendiente, el programa imprime una pista y **no falla en silencio**. Cuando Fisherfaces deje de lanzar `EtapaPendienteAlumno`, el mismo bucle lo evalúa con SVM, k-NN y árbol. Cuando `CargadorLFW.cargar` devuelva un `ConjuntoRostros`, `python main.py lfw` reutiliza ese protocolo.
-
-## Protocolo
-
-- Semilla `42` y `test_size=0.25`, con `stratify=y`.
-- Dimensiones informadas: `d = 10, 20, 30`. LDA queda acotada a `C − 1`.
-- Clasificadores fijos, todos con `predict_proba`:
-  - SVM: `kernel=linear`, `C=1.0`, `probability=True`. La clase predicha sale del margen; la probabilidad de la interfaz es el escalado de Platt. scikit-learn 1.9 depreca ese argumento, y la fábrica silencia solo ese aviso: el reemplazo `CalibratedClassifierCV` cambia la identidad elegida.
-  - k-NN: 3 vecinos; la probabilidad es la fracción de votos
-  - Árbol: profundidad máxima 8; la probabilidad es la proporción de la hoja
-- La tabla no elige un ganador con el conjunto de prueba. Muestra las combinaciones para compararlas.
-- t-SNE (`perplexity=30`) y UMAP (`n_neighbors=15`, `min_dist=0.1`, `random_state=42`) se calculan sobre `Z_train` con `d=20`. Un mapa 2D no reemplaza la accuracy.
-
-`data/resultados/resultados_modelos.csv` guarda dataset, embedding, `d`, modelo, parámetros, accuracy, macro-F1 y el tiempo de ajuste más predicción del clasificador. Las figuras quedan en `figuras/`. Los modelos, en `data/modelos/`. Esas salidas se regeneran y no se suben a Git.
-
-## Interfaz
-
-`streamlit run app.py` muestra una fotografía del conjunto de prueba de Olivetti. En la barra se elige PCA o LDA, el clasificador y `d`. La pantalla indica si la identidad predicha coincide con la real y con qué probabilidad.
-
-No cargue fotografías personales. Los rostros son datos biométricos.
-
-## Presentación
-
-La presentación de la sesión está en `docs/lab-embeddings-faciales.tex`, con el tema Auriga. Esa carpeta es material docente local: está en `.gitignore` y no se publica en GitHub.
+Con una distribución LaTeX que incluya IEEEtran, Babel en español, Latin Modern, booktabs y hyperref, desde la raíz del proyecto:
 
 ```bash
 cd docs
-pdflatex lab-embeddings-faciales.tex
-pdflatex lab-embeddings-faciales.tex
+pdflatex -halt-on-error Informe_Laboratorio_02.tex
+pdflatex -halt-on-error Informe_Laboratorio_02.tex
 ```
 
-## Diseño en breve
+En Overleaf se puede seleccionar `docs/Informe_Laboratorio_02.tex` como documento principal al subir la estructura del ZIP. Las figuras se leen desde `figuras/`.
 
-`PipelineExperimentos` coordina:
+## Historial y publicación del equipo
 
-1. `CargadorOlivetti` (o `CargadorLFW`, cuando el alumno lo complete).
-2. `DivisorEstratificado`, que deja cada identidad de test también en train.
-3. `FabricaExtractores`: PCA, LDA y el gancho de Fisherfaces.
-4. `FabricaClasificadores` y `Evaluador` sobre el embedding, nunca sobre los píxeles de test para ajustar.
-5. `Visualizador` para la curva de varianza, las eigenfaces, las confusiones y los mapas.
-6. `ServicioReconocimiento`, que lee el mismo artefacto que guardó el orquestador.
+El archivo `docs/Repositorio_Lab02.bundle` contiene el historial docente y el commit de implementación. Para recuperar el repositorio con ese historial, ejecuta desde la raíz del ZIP:
 
-## Ética
-
-- El análisis es académico y no justifica vigilancia ni un rendimiento en poblaciones nuevas.
-- Use Olivetti y LFW respetando sus condiciones y cite las fuentes.
-- No incorpore fotografías personales sin autorización ni infiera atributos sensibles.
-- Un acierto en este conjunto de prueba no demuestra que el sistema reconozca a otras personas.
-
-## Estructura del repositorio
-
+```bash
+git clone -b lab02-entrega docs/Repositorio_Lab02.bundle ../ML-2026-02-LAB02-repo
+cd ../ML-2026-02-LAB02-repo
+git log --oneline -3
 ```
-main.py                 Experimentos, tabla y figuras
-app.py                  Interfaz Streamlit
-environment.yml         Entorno conda
-src/pipeline.py         PipelineExperimentos
-src/datos/              Olivetti listo; LFW pendiente
-src/embeddings/         PCA y LDA listos; Fisherfaces pendiente
-src/clasificadores/     SVM, k-NN y árbol
-src/evaluacion/         Métricas y figuras
-src/interfaz/           Predicción sobre el conjunto de prueba
-data/                   Caché, modelos y CSV (generados)
-figuras/                Curva, eigenfaces, mapas y confusiones
-docs/                   Presentación Beamer (solo copia local)
+
+Con un repositorio del equipo ya creado en GitHub y acceso de escritura, sustituye `USUARIO/REPOSITORIO` por su ruta real:
+
+```bash
+git remote set-url origin https://github.com/USUARIO/REPOSITORIO.git
+git push -u origin lab02-entrega:main
 ```
+
+El bloque de autoría del TeX puede completarse con los integrantes confirmados. El PDF y el README del equipo pueden incorporar la URL de entrega una vez publicado el repositorio.
+
+## Datos y atribución
+
+Las fotos de Olivetti provienen de AT&T Laboratories Cambridge. Las de LFW provienen de Huang et al. (UMass Amherst), versión *funneled*. Ambas se cargan vía scikit-learn. El análisis se limita al uso académico con esas dos bases. Los ejemplos visuales corresponden a fotografías de TEST. [Olivetti](https://www.cl.cam.ac.uk/research/dtg/attarchive/facedatabase.html) · [LFW](https://vis-www.cs.umass.edu/lfw/) · [scikit-learn](https://scikit-learn.org/1.8/datasets/real_world.html)

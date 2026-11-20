@@ -6,7 +6,7 @@ import time
 
 import numpy as np
 from sklearn.base import ClassifierMixin
-from sklearn.metrics import accuracy_score, confusion_matrix, f1_score
+from sklearn.metrics import accuracy_score, confusion_matrix, precision_recall_fscore_support
 
 from src.modelos import ResultadoClasificacion
 
@@ -25,17 +25,26 @@ class Evaluador:
         etiquetas = np.unique(y_train)
         inicio = time.perf_counter()
         modelo.fit(Z_train, y_train)
+        ajuste = time.perf_counter() - inicio
+        inicio = time.perf_counter()
         predicciones = np.asarray(modelo.predict(Z_test))
-        tiempo_s = time.perf_counter() - inicio
+        prediccion = time.perf_counter() - inicio
         if predicciones.shape != (y_test.shape[0],):
             raise ValueError(
                 f"Se esperaban {y_test.shape[0]} predicciones y llegaron {predicciones.shape}."
             )
         matriz = confusion_matrix(y_test, predicciones, labels=etiquetas)
+        precision, recall, f1, _ = precision_recall_fscore_support(
+            y_test, predicciones, labels=etiquetas, average="macro", zero_division=0,
+        )
         return ResultadoClasificacion(
             accuracy=float(accuracy_score(y_test, predicciones)),
-            macro_f1=float(f1_score(y_test, predicciones, average="macro", zero_division=0)),
-            tiempo_s=float(tiempo_s),
+            macro_f1=float(f1),
+            tiempo_s=ajuste + prediccion,
             predicciones=predicciones,
             matriz=matriz,
+            macro_precision=float(precision),
+            macro_recall=float(recall),
+            ajuste_s=ajuste,
+            prediccion_s=prediccion,
         )

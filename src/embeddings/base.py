@@ -23,7 +23,7 @@ class ExtractorEmbedding(ABC):
 
     @abstractmethod
     def transform(self, X: np.ndarray) -> np.ndarray:
-        """Proyecta filas ya centradas según lo aprendido en ``fit``."""
+        """Proyecta filas según el centrado y las direcciones aprendidos en ``fit``."""
 
     def fit_transform(self, X: np.ndarray, y: np.ndarray | None = None) -> np.ndarray:
         self.fit(X, y)

@@ -1,40 +1,30 @@
-"""Orquestación OOP del laboratorio.
-
-Etapas implementadas: Olivetti con PCA y LDA, tres clasificadores y figuras.
-Etapas pendientes del alumno: Fisherfaces y el experimento LFW.
-"""
+"""Orquestación de carga, embeddings, clasificación y evidencia."""
 
 from __future__ import annotations
 
-from pathlib import Path
-
-import joblib
+import numpy as np
 import pandas as pd
+from threadpoolctl import threadpool_limits
 
+from src.almacen_modelos import AlmacenModelos
 from src.clasificadores.fabrica import FabricaClasificadores
-from src.config import (
-    DIMENSION_MAPAS,
-    DIMENSIONES,
-    DIR_RESULTADOS,
-    RANDOM_STATE,
-    TEST_SIZE,
-    asegurar_directorios,
-    ruta_modelo,
-)
+from src.config import DIMENSION_MAPAS, DIMENSIONES_RECONSTRUCCION, asegurar_directorios
 from src.datos.division import DivisorEstratificado
 from src.datos.lfw import CargadorLFW
 from src.datos.olivetti import CargadorOlivetti
 from src.embeddings.base import ExtractorEmbedding
 from src.embeddings.fabrica import FabricaExtractores
+from src.embeddings.fisherfaces import ExtractorFisherfaces
 from src.embeddings.pca import ExtractorPCA
 from src.evaluacion.metricas import Evaluador
+from src.evaluacion.registro import RegistroExperimento
 from src.evaluacion.visualizacion import Visualizador
-from src.excepciones import EtapaPendienteAlumno
+from src.excepciones import DimensionInvalida
 from src.modelos import ConjuntoRostros, Particion, ResultadoExperimento
 
 
 class PipelineExperimentos:
-    """Coordina la carga, el split, los embeddings y la evidencia en TEST."""
+    """Ejecuta el mismo protocolo por separado para cada conjunto."""
 
     def __init__(
         self,
@@ -56,179 +46,156 @@ class PipelineExperimentos:
 
     def ejecutar_lfw(self) -> list[ResultadoExperimento]:
         print("== Experimento: LFW ==")
-        try:
-            conjunto = CargadorLFW().cargar()
-        except EtapaPendienteAlumno as exc:
-            print(exc)
-            return []
-        return self._ejecutar(conjunto)
+        return self._ejecutar(CargadorLFW().cargar())
 
     def ejecutar_experimentos(self) -> None:
         self.ejecutar_olivetti()
         self.ejecutar_lfw()
 
+    @threadpool_limits.wrap(limits=1)
     def _ejecutar(self, conjunto: ConjuntoRostros) -> list[ResultadoExperimento]:
         asegurar_directorios()
         particion = self.divisor.dividir(conjunto)
+        almacen = AlmacenModelos(conjunto, particion)
+        registro = RegistroExperimento(conjunto.nombre)
         print(
-            f"X {tuple(conjunto.X.shape)}  "
-            f"train {tuple(particion.X_train.shape)}  "
-            f"test {tuple(particion.X_test.shape)}  "
-            f"identidades {conjunto.n_clases}"
+            f"N={conjunto.X.shape[0]} C={conjunto.n_clases} "
+            f"H={conjunto.alto} W={conjunto.ancho} "
+            f"TRAIN={particion.y_train.size} TEST={particion.y_test.size}"
         )
         resultados: list[ResultadoExperimento] = []
-        proyecciones_mapa: dict[tuple[str, int], tuple] = {}
-        fisher_omitido = False
+        predicciones: list[pd.DataFrame] = []
+        omitidas: list[dict] = []
+        mapas: dict[str, np.ndarray] = {}
 
-        for extractor in self.fabrica_extractores.para_experimento(conjunto.n_clases):
-            if fisher_omitido and extractor.nombre == "fisherfaces":
-                continue
+        for extractor in self.fabrica_extractores.para_experimento(
+            conjunto.n_clases, particion.X_train.shape
+        ):
             try:
                 Z_train, Z_test = self._proyectar(extractor, particion)
-            except EtapaPendienteAlumno as exc:
-                print(exc)
-                if extractor.nombre == "fisherfaces":
-                    fisher_omitido = True
+            except DimensionInvalida as error:
+                omitidas.append({"embedding": extractor.nombre, "d": extractor.dimension, "causa": str(error)})
+                print(f"  {extractor.nombre} d={extractor.dimension} omitido: {error}")
                 continue
-
-            if extractor.dimension == DIMENSION_MAPAS and extractor.nombre in {"pca", "lda"}:
-                proyecciones_mapa[(extractor.nombre, extractor.dimension)] = (
-                    Z_train,
-                    particion.y_train,
-                )
-            resultados.extend(
-                self._evaluar_clasificadores(conjunto, extractor, particion, Z_train, Z_test)
+            if extractor.dimension == DIMENSION_MAPAS:
+                mapas[extractor.nombre] = Z_train
+            filas, pred = self._evaluar_clasificadores(
+                conjunto, extractor, particion, Z_train, Z_test, almacen,
             )
+            resultados.extend(filas)
+            predicciones.extend(pred)
 
-        self._figuras_pca(conjunto, particion)
-        self._mapas(conjunto.nombre, proyecciones_mapa)
-        self._guardar_csv(resultados, conjunto.nombre)
-        self._imprimir(resultados)
+        registro.guardar_particion(
+            conjunto, particion, self.divisor.random_state, self.divisor.test_size,
+            almacen.huella_train, omitidas,
+        )
+        if not resultados:
+            raise ValueError(f"No hay combinaciones evaluables para {conjunto.nombre}.")
+        registro.escribir_tabla("predicciones", pd.concat(predicciones, ignore_index=True))
+        tabla = registro.guardar_metricas(resultados)
+        self.visualizador.comparar(tabla, conjunto.nombre)
+        self._figuras_pca(conjunto, particion, registro)
+        for embedding, Z_train in mapas.items():
+            for metodo in ("tsne", "umap"):
+                ruta = self.visualizador.mapa(
+                    Z_train, particion.y_train, metodo, conjunto.nombre, embedding, DIMENSION_MAPAS,
+                )
+                print(f"  mapa {ruta.name}")
+        print(f"  {len(resultados)} combinaciones guardadas en {registro.directorio}")
         return resultados
 
     def _proyectar(
-        self,
-        extractor: ExtractorEmbedding,
-        particion: Particion,
-    ) -> tuple:
+        self, extractor: ExtractorEmbedding, particion: Particion,
+    ) -> tuple[np.ndarray, np.ndarray]:
         extractor.fit(particion.X_train, particion.y_train)
-        Z_train = extractor.transform(particion.X_train)
-        Z_test = extractor.transform(particion.X_test)
-        return Z_train, Z_test
+        return extractor.transform(particion.X_train), extractor.transform(particion.X_test)
 
     def _evaluar_clasificadores(
         self,
         conjunto: ConjuntoRostros,
         extractor: ExtractorEmbedding,
         particion: Particion,
-        Z_train,
-        Z_test,
-    ) -> list[ResultadoExperimento]:
-        filas: list[ResultadoExperimento] = []
+        Z_train: np.ndarray,
+        Z_test: np.ndarray,
+        almacen: AlmacenModelos,
+    ) -> tuple[list[ResultadoExperimento], list[pd.DataFrame]]:
+        filas, predicciones = [], []
+        d = extractor.dimension
+        d_pca = {"pca": d, "lda": None}.get(extractor.nombre)
+        if isinstance(extractor, ExtractorFisherfaces):
+            d_pca = extractor.d_pca
         for nombre in self.fabrica_clasificadores.disponibles():
             modelo = self.fabrica_clasificadores.crear(nombre)
             medicion = self.evaluador.evaluar(
-                modelo,
-                Z_train,
-                particion.y_train,
-                Z_test,
-                particion.y_test,
+                modelo, Z_train, particion.y_train, Z_test, particion.y_test,
             )
             fila = ResultadoExperimento(
                 dataset=conjunto.nombre,
                 embedding=extractor.nombre,
-                d=extractor.dimension,
+                d=d,
                 modelo=nombre,
                 parametros=self.fabrica_clasificadores.parametros(nombre),
                 accuracy=medicion.accuracy,
                 macro_f1=medicion.macro_f1,
                 tiempo_s=medicion.tiempo_s,
+                macro_precision=medicion.macro_precision,
+                macro_recall=medicion.macro_recall,
+                ajuste_s=medicion.ajuste_s,
+                prediccion_s=medicion.prediccion_s,
+                d_pca=d_pca,
             )
             filas.append(fila)
-            self._guardar_modelo(conjunto, extractor, nombre, modelo)
-            ruta = self.visualizador.confusion(
-                medicion.matriz,
-                conjunto.nombre,
-                extractor.nombre,
-                nombre,
-                extractor.dimension,
-            )
-            print(
-                f"  {extractor.nombre:12} d={extractor.dimension:<3} {nombre:6} "
-                f"acc={fila.accuracy:.3f}  macro-F1={fila.macro_f1:.3f}  "
-                f"{fila.tiempo_s:.2f}s  -> {ruta.name}"
-            )
-        return filas
-
-    def _guardar_modelo(self, conjunto, extractor, nombre: str, modelo) -> Path:
-        ruta = ruta_modelo(conjunto.nombre, extractor.nombre, nombre, extractor.dimension)
-        joblib.dump(
-            {
-                "extractor": extractor,
-                "clasificador": modelo,
+            predicciones.append(pd.DataFrame({
                 "dataset": conjunto.nombre,
                 "embedding": extractor.nombre,
+                "d": d,
                 "modelo": nombre,
-                "d": extractor.dimension,
-                "random_state": RANDOM_STATE,
-                "test_size": TEST_SIZE,
-                "nombres": conjunto.nombres_identidades,
-                "alto": conjunto.alto,
-                "ancho": conjunto.ancho,
-            },
-            ruta,
-        )
-        return ruta
+                "fila": particion.indices_test,
+                "id_real": particion.y_test,
+                "id_predicho": medicion.predicciones,
+            }))
+            almacen.guardar(extractor, nombre, modelo)
+            ruta = self.visualizador.confusion(medicion.matriz, conjunto.nombre, extractor.nombre, nombre, d)
+            if d == DIMENSION_MAPAS:
+                self.visualizador.ejemplos(conjunto, particion, medicion, extractor.nombre, nombre, d)
+            print(
+                f"  {extractor.nombre:12} d={d:<3} {nombre:6} "
+                f"acc={fila.accuracy:.3f}  macro-F1={fila.macro_f1:.3f}  "
+                f"{fila.tiempo_s:.4f}s  -> {ruta.name}"
+            )
+        return filas, predicciones
 
-    def _figuras_pca(self, conjunto: ConjuntoRostros, particion: Particion) -> None:
-        if conjunto.n_clases < 2:
-            return
-        d_ref = min(max(DIMENSIONES), particion.X_train.shape[0] - 1, particion.X_train.shape[1])
-        referencia = ExtractorPCA(n_components=d_ref)
-        referencia.fit(particion.X_train)
-        self.visualizador.curva_pca(particion.X_train, conjunto.nombre)
+    def _figuras_pca(
+        self, conjunto: ConjuntoRostros, particion: Particion, registro: RegistroExperimento,
+    ) -> None:
+        d_ref = min(particion.X_train.shape[0] - 1, particion.X_train.shape[1], 120)
+        referencia = ExtractorPCA(n_components=d_ref).fit(particion.X_train)
+        curva = referencia.varianza_acumulada()
+        registro.escribir_tabla("varianza_pca", pd.DataFrame({
+            "d": np.arange(1, d_ref + 1),
+            "varianza_acumulada_train": curva,
+        }))
+        self.visualizador.curva_pca(curva, conjunto.nombre)
         self.visualizador.eigenfaces(
             referencia.rostro_medio(conjunto.alto, conjunto.ancho),
             referencia.componentes_imagen(conjunto.alto, conjunto.ancho),
             conjunto.nombre,
         )
 
-    def _mapas(self, dataset: str, proyecciones: dict) -> None:
-        for (embedding, d), (Z_train, y_train) in proyecciones.items():
-            for metodo in ("tsne", "umap"):
-                ruta = self.visualizador.mapa(Z_train, y_train, metodo, dataset, embedding, d)
-                print(f"  mapa {ruta.name}")
-
-    def _guardar_csv(self, filas: list[ResultadoExperimento], dataset: str) -> Path:
-        columnas = [
-            "dataset",
-            "embedding",
-            "d",
-            "modelo",
-            "parametros",
-            "accuracy",
-            "macro_f1",
-            "tiempo_s",
-        ]
-        nuevo = pd.DataFrame([fila.__dict__ for fila in filas], columns=columnas)
-        if not nuevo.empty:
-            nuevo["accuracy"] = nuevo["accuracy"].round(6)
-            nuevo["macro_f1"] = nuevo["macro_f1"].round(6)
-            nuevo["tiempo_s"] = nuevo["tiempo_s"].round(4)
-        ruta = DIR_RESULTADOS / "resultados_modelos.csv"
-        if ruta.exists():
-            previo = pd.read_csv(ruta)
-            previo = previo[previo["dataset"] != dataset]
-            nuevo = pd.concat([previo, nuevo], ignore_index=True)
-        nuevo.to_csv(ruta, index=False)
-        print(f"Tabla guardada en {ruta}")
-        return ruta
-
-    @staticmethod
-    def _imprimir(filas: list[ResultadoExperimento]) -> None:
-        if not filas:
-            print("Sin filas nuevas en la tabla.")
-            return
-        tabla = pd.DataFrame([fila.__dict__ for fila in filas])
-        with pd.option_context("display.max_colwidth", 48, "display.width", 120):
-            print(tabla.to_string(index=False, float_format=lambda v: f"{v:.4f}"))
+        imagenes, errores, filas = {}, {}, []
+        for k in DIMENSIONES_RECONSTRUCCION:
+            if k > d_ref:
+                continue
+            reconstruccion = referencia.reconstruir(particion.X_test, k)
+            ecm = np.mean((particion.X_test - reconstruccion) ** 2, axis=1)
+            imagenes[k] = reconstruccion[0].reshape(conjunto.alto, conjunto.ancho)
+            errores[k] = float(ecm[0])
+            filas.append({
+                "d": k,
+                "fila_ejemplo": particion.indices_test[0],
+                "varianza_acumulada_train": curva[k - 1],
+                "ecm_ejemplo": ecm[0],
+                "ecm_medio_test": ecm.mean(),
+            })
+        registro.escribir_tabla("reconstruccion_pca", pd.DataFrame(filas))
+        self.visualizador.reconstruccion(particion.images_test[0], imagenes, errores, conjunto.nombre)

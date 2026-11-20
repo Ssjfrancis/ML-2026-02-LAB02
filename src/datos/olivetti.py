@@ -35,6 +35,9 @@ class CargadorOlivetti(CargadorRostros):
             nombres_identidades=nombres,
             alto=alto,
             ancho=ancho,
+            ids_originales=list(range(len(nombres))),
         )
         validar_conjunto(conjunto)
+        if images.shape != (400, 64, 64) or not np.array_equal(np.bincount(y), np.full(40, 10)):
+            raise ValueError("Olivetti debe tener 400 imágenes de 64×64 y 10 por identidad.")
         return conjunto

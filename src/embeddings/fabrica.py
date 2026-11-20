@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from src.config import DIMENSIONES
+from src.config import DIMENSIONES, EMBEDDINGS
 from src.embeddings.base import ExtractorEmbedding
 from src.embeddings.fisherfaces import ExtractorFisherfaces
 from src.embeddings.lda import ExtractorLDA
@@ -24,18 +24,31 @@ class FabricaExtractores:
             )
         raise ValueError(f"Embedding desconocido: {nombre}")
 
-    def para_experimento(self, n_clases: int) -> list[ExtractorEmbedding]:
-        """PCA y LDA en d = 10, 20, 30, más Fisherfaces para que el alumno lo active."""
-        extractores: list[ExtractorEmbedding] = []
-        lda_vistos: set[int] = set()
-        for d in DIMENSIONES:
-            extractores.append(ExtractorPCA(n_components=d))
-            d_lda = self.dimension_lda(d, n_clases)
-            if d_lda not in lda_vistos:
-                lda_vistos.add(d_lda)
-                extractores.append(ExtractorLDA(n_components=d_lda))
-            extractores.append(ExtractorFisherfaces(d_pca=d, d_lda=d_lda))
-        return extractores
+    def para_experimento(
+        self, n_clases: int, forma_train: tuple[int, int] | None = None
+    ) -> list[ExtractorEmbedding]:
+        """Construye las combinaciones de la guía que cumplen los límites de TRAIN."""
+        if forma_train is None:
+            d_max = max(DIMENSIONES)
+            forma_train = (n_clases + d_max, d_max)
+        return [
+            self.crear(nombre, d, n_clases)
+            for nombre in EMBEDDINGS
+            for d in self.dimensiones_validas(nombre, n_clases, forma_train)
+        ]
+
+    @staticmethod
+    def dimensiones_validas(
+        nombre: str, n_clases: int, forma_train: tuple[int, int]
+    ) -> tuple[int, ...]:
+        n, p = forma_train
+        if nombre == "pca":
+            limite = min(n - 1, p)
+        elif nombre in {"lda", "fisherfaces"}:
+            limite = min(n_clases - 1, p, n - n_clases)
+        else:
+            raise ValueError(f"Embedding desconocido: {nombre}")
+        return tuple(d for d in DIMENSIONES if d <= limite)
 
     @staticmethod
     def dimension_lda(d: int, n_clases: int) -> int:

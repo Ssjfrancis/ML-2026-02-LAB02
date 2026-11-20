@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import pandas as pd
 import streamlit as st
 
-from src.config import DIMENSIONES
+from src.config import NOMBRES_CLASIFICADORES, NOMBRES_DATASETS, NOMBRES_EMBEDDINGS
 from src.interfaz.servicio import ServicioReconocimiento
 
 
@@ -24,39 +24,44 @@ st.set_page_config(page_title="Embeddings faciales", layout="wide")
 
 
 @st.cache_resource
-def obtener_servicio() -> ServicioReconocimiento:
-    return ServicioReconocimiento()
+def obtener_servicio(dataset: str) -> ServicioReconocimiento:
+    return ServicioReconocimiento(dataset)
 
 
 def main() -> None:
-    servicio = obtener_servicio()
     st.title("Reconocimiento de rostros con embeddings lineales")
-    st.caption(
-        "Cada fotografía pertenece al conjunto de prueba de Olivetti "
-        f"({servicio.particion.images_test.shape[0]} imágenes). "
-        "No participó del ajuste de PCA, LDA ni del clasificador."
-    )
 
     with st.sidebar:
         st.header("Modelo")
-        embedding = st.radio("Representación", options=["pca", "lda"], format_func=_etiqueta_embedding)
+        dataset = st.selectbox(
+            "Conjunto de datos", options=list(NOMBRES_DATASETS), format_func=NOMBRES_DATASETS.__getitem__,
+        )
+        try:
+            servicio = obtener_servicio(dataset)
+        except OSError as error:
+            st.error(f"No se pudo cargar {NOMBRES_DATASETS[dataset]}. Revisa la descarga. {error}")
+            st.stop()
+        embedding = st.radio(
+            "Representación", options=list(NOMBRES_EMBEDDINGS), format_func=NOMBRES_EMBEDDINGS.__getitem__,
+        )
         clasificador = st.radio(
             "Clasificador",
-            options=["svm", "knn", "arbol"],
-            format_func=_etiqueta_clasificador,
+            options=list(NOMBRES_CLASIFICADORES),
+            format_func=NOMBRES_CLASIFICADORES.__getitem__,
         )
-        d = st.select_slider("Componentes (d)", options=list(DIMENSIONES))
-        st.info(
-            "Fisherfaces queda como TODO(alumno) en src/embeddings/fisherfaces.py. "
-            "La interfaz usa solo PCA y LDA, que ya están ajustados en TRAIN."
-        )
+        d = st.select_slider("Componentes (d)", options=servicio.dimensiones_para(embedding))
         etiquetas = servicio.etiquetas_prueba()
         indice = st.selectbox(
             "Fotografía de prueba",
             options=range(len(etiquetas)),
-            format_func=lambda i: etiquetas[i],
+            format_func=etiquetas.__getitem__,
+            key=f"foto_{dataset}",
         )
 
+    st.caption(
+        f"{NOMBRES_DATASETS[dataset]} · {len(etiquetas)} fotografías reservadas para TEST. "
+        "El modelo se ajusta con las fotografías de TRAIN."
+    )
     with st.spinner("Cargando el modelo ajustado en TRAIN..."):
         prediccion = servicio.predecir(indice, embedding, clasificador, int(d))
 
@@ -76,7 +81,7 @@ def main() -> None:
         real, predicha, probabilidad = st.columns(3)
         real.markdown(f"**Identidad real**\n\n{prediccion.nombre_real}")
         predicha.markdown(f"**Identidad predicha**\n\n{prediccion.nombre_predicho}")
-        probabilidad.markdown(f"**Probabilidad**\n\n{prediccion.probabilidad:.1%}")
+        probabilidad.markdown(f"**Probabilidad estimada**\n\n{prediccion.probabilidad:.1%}")
         st.caption(prediccion.nota_probabilidad)
         st.subheader("Cinco identidades más probables")
         tabla = pd.DataFrame(prediccion.top, columns=["identidad", "probabilidad"])
@@ -87,14 +92,6 @@ def main() -> None:
             horizontal=True,
             sort=False,
         )
-
-
-def _etiqueta_embedding(nombre: str) -> str:
-    return {"pca": "PCA", "lda": "LDA"}[nombre]
-
-
-def _etiqueta_clasificador(nombre: str) -> str:
-    return {"svm": "SVM", "knn": "k-NN", "arbol": "Árbol"}[nombre]
 
 
 main()

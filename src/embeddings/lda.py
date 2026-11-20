@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import numpy as np
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
+from sklearn.utils.validation import check_X_y
 
 from src.embeddings.base import ExtractorEmbedding
+from src.excepciones import DimensionInvalida
 
 
 class ExtractorLDA(ExtractorEmbedding):
@@ -29,13 +31,19 @@ class ExtractorLDA(ExtractorEmbedding):
     def fit(self, X: np.ndarray, y: np.ndarray | None = None) -> ExtractorLDA:
         if y is None:
             raise ValueError("LDA necesita y_train: aprende con las identidades.")
+        X, y = check_X_y(X, y, dtype=np.float64)
         n_clases = int(np.unique(y).size)
-        maximo = n_clases - 1
+        maximo = min(n_clases - 1, X.shape[1], X.shape[0] - n_clases)
         if self.n_components > maximo:
-            raise ValueError(
-                f"LDA con d={self.n_components} supera C-1={maximo}. Reduzca d."
+            raise DimensionInvalida(
+                f"LDA con d={self.n_components} supera min(C-1, p, N_train-C)={maximo}."
             )
         self._modelo.fit(X, y)
+        rango = self._modelo.scalings_.shape[1]
+        if rango < self.n_components:
+            raise DimensionInvalida(
+                f"LDA con d={self.n_components} supera el rango efectivo {rango}."
+            )
         return self
 
     def transform(self, X: np.ndarray) -> np.ndarray:

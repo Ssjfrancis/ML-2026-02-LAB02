@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import numpy as np
 from sklearn.decomposition import PCA
+from sklearn.utils.validation import check_array
 
 from src.config import RANDOM_STATE
 from src.embeddings.base import ExtractorEmbedding
+from src.excepciones import DimensionInvalida
 
 
 class ExtractorPCA(ExtractorEmbedding):
@@ -31,12 +33,19 @@ class ExtractorPCA(ExtractorEmbedding):
 
     def fit(self, X: np.ndarray, y: np.ndarray | None = None) -> ExtractorPCA:
         del y  # PCA no usa la identidad.
-        n_max = min(X.shape[0], X.shape[1])
+        X = check_array(X, dtype=np.float64, ensure_min_samples=2)
+        n_max = min(X.shape[0] - 1, X.shape[1])
         if self.n_components > n_max:
-            raise ValueError(
+            raise DimensionInvalida(
                 f"PCA no puede conservar d={self.n_components} con rango máximo {n_max}."
             )
         self._modelo.fit(X)
+        singular = self._modelo.singular_values_
+        tolerancia = np.finfo(singular.dtype).eps * max(X.shape) * singular[0]
+        if singular[-1] <= tolerancia:
+            raise DimensionInvalida(
+                f"PCA con d={self.n_components} excede el rango numérico de TRAIN."
+            )
         return self
 
     def transform(self, X: np.ndarray) -> np.ndarray:
@@ -56,3 +65,10 @@ class ExtractorPCA(ExtractorEmbedding):
     def rostro_medio(self, alto: int, ancho: int) -> np.ndarray:
         """Media de TRAIN que sklearn resta antes de proyectar."""
         return self._modelo.mean_.reshape(alto, ancho)
+
+    def reconstruir(self, X: np.ndarray, k: int) -> np.ndarray:
+        """Reconstruye filas con las primeras k direcciones de la misma base PCA."""
+        if not 1 <= k <= self.dimension:
+            raise ValueError(f"k debe estar entre 1 y {self.dimension}.")
+        Z = self.transform(X)[:, :k]
+        return self._modelo.mean_ + Z @ self._modelo.components_[:k]

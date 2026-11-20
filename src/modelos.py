@@ -18,6 +18,7 @@ class ConjuntoRostros:
     nombres_identidades: list[str]
     alto: int
     ancho: int
+    ids_originales: list[int] = field(default_factory=list)
 
     @property
     def n_clases(self) -> int:
@@ -50,6 +51,11 @@ class ResultadoExperimento:
     accuracy: float
     macro_f1: float
     tiempo_s: float
+    macro_precision: float
+    macro_recall: float
+    ajuste_s: float
+    prediccion_s: float
+    d_pca: int | None
 
 
 @dataclass
@@ -61,6 +67,10 @@ class ResultadoClasificacion:
     tiempo_s: float
     predicciones: np.ndarray
     matriz: np.ndarray
+    macro_precision: float
+    macro_recall: float
+    ajuste_s: float
+    prediccion_s: float
 
 
 @dataclass

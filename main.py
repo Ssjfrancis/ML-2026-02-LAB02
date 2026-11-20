@@ -3,19 +3,21 @@
 
 Uso (con el entorno conda activado):
 
-    python main.py olivetti       # PCA y LDA sobre Olivetti; Fisherfaces avisa
-    python main.py lfw            # TODO(alumno): mismo protocolo cuando exista el cargador
-    python main.py experimentos   # Olivetti e intento de LFW
+    python main.py olivetti       # tres representaciones sobre Olivetti
+    python main.py lfw            # mismo protocolo sobre LFW
+    python main.py experimentos   # Olivetti y LFW
 """
 
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
 # Permite `python main.py` sin instalar el paquete.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+os.environ.setdefault("MPLBACKEND", "Agg")
 
 from src.pipeline import PipelineExperimentos  # noqa: E402
 
@@ -27,7 +29,7 @@ def construir_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "etapa",
         choices=["olivetti", "lfw", "experimentos"],
-        help="Conjunto a evaluar. 'experimentos' corre Olivetti e intenta LFW.",
+        help="Conjunto a evaluar. 'experimentos' corre Olivetti y LFW.",
     )
     return parser
 

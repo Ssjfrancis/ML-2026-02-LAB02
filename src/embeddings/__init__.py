@@ -1,4 +1,4 @@
-"""Embeddings lineales: PCA y LDA listos; Fisherfaces es TODO(alumno)."""
+"""Extractores de embeddings lineales PCA, LDA y Fisherfaces."""
 
 from src.embeddings.base import ExtractorEmbedding
 from src.embeddings.fabrica import FabricaExtractores

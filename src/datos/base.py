@@ -22,6 +22,8 @@ def validar_conjunto(conjunto: ConjuntoRostros) -> None:
     if conjunto.images.ndim != 3:
         raise ValueError("images debe tener forma (N, H, W).")
     n, alto, ancho = conjunto.images.shape
+    if min(n, alto, ancho) < 1:
+        raise ValueError("El conjunto debe contener imágenes no vacías.")
     if (alto, ancho) != (conjunto.alto, conjunto.ancho):
         raise ValueError("alto y ancho no coinciden con images.shape.")
     if conjunto.X.shape != (n, alto * ancho):
@@ -32,5 +34,13 @@ def validar_conjunto(conjunto: ConjuntoRostros) -> None:
         raise ValueError(f"y debe tener forma {(n,)}; se recibió {conjunto.y.shape}.")
     if not np.isfinite(conjunto.X).all():
         raise ValueError("X contiene valores no finitos.")
-    if len(conjunto.nombres_identidades) < conjunto.n_clases:
-        raise ValueError("Faltan nombres para las identidades del conjunto.")
+    if not np.array_equal(conjunto.images.reshape(n, -1), conjunto.X):
+        raise ValueError("Cada fila de X debe coincidir con su imagen aplanada.")
+    clases = np.unique(conjunto.y)
+    if conjunto.y.dtype.kind not in "iu" or not np.array_equal(clases, np.arange(clases.size)):
+        raise ValueError("y debe contener etiquetas enteras consecutivas desde cero.")
+    if len(conjunto.nombres_identidades) != clases.size:
+        raise ValueError("Debe haber un nombre por identidad.")
+    ids = conjunto.ids_originales
+    if ids and (len(ids) != clases.size or len(set(ids)) != clases.size):
+        raise ValueError("Debe haber un identificador original distinto por identidad.")

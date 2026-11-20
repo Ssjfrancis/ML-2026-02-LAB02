@@ -1,13 +1,21 @@
-name: lab02-ml-2026-2
+name: lab-embeddings-faciales
 channels:
   - conda-forge
+  - nodefaults
 dependencies:
   - python=3.11
-  - numpy
-  - pandas
-  - matplotlib
-  - scikit-learn
-  - streamlit
-  - python-dotenv
-  - umap-learn
-  - joblib
+  - numpy=2.3.5
+  - scipy=1.16.3
+  - pandas=2.3.3
+  - matplotlib-base=3.10.8
+  - scikit-learn=1.8.0
+  - umap-learn=0.5.11
+  - numba=0.63.1
+  - streamlit=1.56.0
+  - python-dotenv=1.2.1
+  - joblib=1.5.3
+  - pillow=12.2.0
+  - threadpoolctl=3.6.0
+  - filelock
+  - jupyterlab=4
+  - nbclient=0.10.4

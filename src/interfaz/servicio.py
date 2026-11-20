@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-import joblib
 import numpy as np
+from threadpoolctl import threadpool_limits
 
+from src.almacen_modelos import AlmacenModelos
 from src.clasificadores.fabrica import FabricaClasificadores
-from src.config import DIMENSIONES, RANDOM_STATE, TEST_SIZE, asegurar_directorios, ruta_modelo
+from src.config import asegurar_directorios
 from src.datos.division import DivisorEstratificado
+from src.datos.lfw import CargadorLFW
 from src.datos.olivetti import CargadorOlivetti
 from src.embeddings.fabrica import FabricaExtractores
 from src.modelos import ConjuntoRostros, Particion, Prediccion
@@ -16,17 +18,26 @@ from src.modelos import ConjuntoRostros, Particion, Prediccion
 class ServicioReconocimiento:
     """Usa el mismo split y los mismos artefactos que ``main.py``."""
 
-    def __init__(self) -> None:
+    def __init__(self, dataset: str = "olivetti") -> None:
+        cargadores = {"olivetti": CargadorOlivetti, "lfw": CargadorLFW}
+        if dataset not in cargadores:
+            raise ValueError(f"Dataset desconocido: {dataset}")
         asegurar_directorios()
-        self.conjunto: ConjuntoRostros = CargadorOlivetti().cargar()
+        self.conjunto: ConjuntoRostros = cargadores[dataset]().cargar()
         self.particion: Particion = DivisorEstratificado().dividir(self.conjunto)
         self.fabrica_extractores = FabricaExtractores()
         self.fabrica_clasificadores = FabricaClasificadores()
-        self._memoria: dict[tuple, dict] = {}
+        self.almacen = AlmacenModelos(self.conjunto, self.particion)
+        self._memoria: dict[tuple[str, str, int], dict] = {}
 
     @property
     def dimensiones(self) -> tuple[int, ...]:
-        return DIMENSIONES
+        return self.dimensiones_para("pca")
+
+    def dimensiones_para(self, embedding: str) -> tuple[int, ...]:
+        return self.fabrica_extractores.dimensiones_validas(
+            embedding, self.conjunto.n_clases, self.particion.X_train.shape,
+        )
 
     def etiquetas_prueba(self) -> list[str]:
         etiquetas = []
@@ -41,21 +52,16 @@ class ServicioReconocimiento:
 
     def predecir(self, indice: int, embedding: str, clasificador: str, d: int) -> Prediccion:
         self._exigir_indice(indice)
-        if embedding == "fisherfaces":
-            raise ValueError(
-                "Fisherfaces es TODO(alumno) en src/embeddings/fisherfaces.py "
-                "y no está disponible en la interfaz."
-            )
         bundle = self._obtener_bundle(embedding, clasificador, d)
         x = self.particion.X_test[indice : indice + 1]
         Z = bundle["extractor"].transform(x)
         modelo = bundle["clasificador"]
         probabilidad = np.asarray(modelo.predict_proba(Z)[0], dtype=float)
         clases = np.asarray(modelo.classes_)
-        ganador = int(np.argmax(probabilidad))
-        predicha = int(clases[ganador])
+        predicha = int(modelo.predict(Z)[0])
+        indice_predicha = np.flatnonzero(clases == predicha)[0]
         real = int(self.particion.y_test[indice])
-        orden = np.argsort(probabilidad)[::-1][:5]
+        orden = np.argsort(-probabilidad, kind="stable")[:5]
         top = [
             (self._nombre(int(clases[i])), float(probabilidad[i]))
             for i in orden
@@ -66,50 +72,30 @@ class ServicioReconocimiento:
             identidad_predicha=predicha,
             nombre_real=self._nombre(real),
             nombre_predicho=self._nombre(predicha),
-            probabilidad=float(probabilidad[ganador]),
+            probabilidad=float(probabilidad[indice_predicha]),
             acierto=predicha == real,
             top=top,
             nota_probabilidad=self.fabrica_clasificadores.nota_probabilidad(clasificador),
         )
 
     def _obtener_bundle(self, embedding: str, clasificador: str, d: int) -> dict:
-        clave = (embedding, clasificador, d, RANDOM_STATE, TEST_SIZE)
+        clave = (embedding, clasificador, d)
         if clave in self._memoria:
             return self._memoria[clave]
-        ruta = ruta_modelo(self.conjunto.nombre, embedding, clasificador, d)
-        if ruta.exists():
-            bundle = joblib.load(ruta)
-            if (
-                bundle.get("random_state") == RANDOM_STATE
-                and bundle.get("test_size") == TEST_SIZE
-            ):
-                self._memoria[clave] = bundle
-                return bundle
-        bundle = self._entrenar(embedding, clasificador, d)
+        bundle = self.almacen.cargar(embedding, clasificador, d)
+        if bundle is None:
+            bundle = self._entrenar(embedding, clasificador, d)
         self._memoria[clave] = bundle
         return bundle
 
+    @threadpool_limits.wrap(limits=1)
     def _entrenar(self, embedding: str, clasificador: str, d: int) -> dict:
         extractor = self.fabrica_extractores.crear(embedding, d, self.conjunto.n_clases)
         extractor.fit(self.particion.X_train, self.particion.y_train)
         Z_train = extractor.transform(self.particion.X_train)
         modelo = self.fabrica_clasificadores.crear(clasificador)
         modelo.fit(Z_train, self.particion.y_train)
-        bundle = {
-            "extractor": extractor,
-            "clasificador": modelo,
-            "dataset": self.conjunto.nombre,
-            "embedding": embedding,
-            "modelo": clasificador,
-            "d": extractor.dimension,
-            "random_state": RANDOM_STATE,
-            "test_size": TEST_SIZE,
-            "nombres": self.conjunto.nombres_identidades,
-            "alto": self.conjunto.alto,
-            "ancho": self.conjunto.ancho,
-        }
-        joblib.dump(bundle, ruta_modelo(self.conjunto.nombre, embedding, clasificador, extractor.dimension))
-        return bundle
+        return self.almacen.guardar(extractor, clasificador, modelo)
 
     def _nombre(self, identidad: int) -> str:
         nombres = self.conjunto.nombres_identidades

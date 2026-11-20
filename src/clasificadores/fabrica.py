@@ -55,8 +55,8 @@ class FabricaClasificadores:
         """Qué significa el número que muestra la interfaz."""
         notas = {
             "svm": (
-                "SVM lineal: probabilidad calibrada (escalado de Platt) "
-                "a partir del margen. No es una frecuencia de votos."
+                "El SVM predice a partir de los márgenes. La probabilidad de esa "
+                "identidad se estima con escalado de Platt y acoplamiento multiclase."
             ),
             "knn": (
                 "k-NN con k=3: la probabilidad es la fracción de vecinos "
